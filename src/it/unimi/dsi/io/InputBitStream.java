@@ -122,6 +122,8 @@ public class InputBitStream implements BooleanIterator, Flushable, Closeable {
 	 * The upper 16 bits contain code lengths, the lower 16 bits decoded values. 0 means undecodable. */
 	public static final int[] GAMMA = new int[256 * 256], DELTA = new int[256 * 256], ZETA_3 = new int[256 * 256], SHIFTED_GAMMA = new int[256 * 256];
 
+	private static final int EOF = -1;
+
 	static void fillArrayFromResource(final String resource, final int array[]) throws IOException {
 		final String resouceFullPath = "/it/unimi/dsi/io/" + resource;
         final InputStream ris = InputBitStream.class.getResourceAsStream(resouceFullPath);
@@ -429,7 +431,9 @@ public class InputBitStream implements BooleanIterator, Flushable, Closeable {
 	private final int read() throws IOException {
 		if (noBuffer) {
 			final int t = is.read();
-			if (t == -1) throw new EOFException();
+			if (t == -1) {
+				return EOF;
+			}
 			else position++;
 			return t;
 		}
@@ -438,7 +442,7 @@ public class InputBitStream implements BooleanIterator, Flushable, Closeable {
 			avail = is.read(buffer);
 			if (avail == -1) {
 				avail = 0;
-				throw new EOFException();
+				return EOF;
 			}
 			else {
 				position += pos;
@@ -449,6 +453,14 @@ public class InputBitStream implements BooleanIterator, Flushable, Closeable {
 		avail--;
 		return buffer[pos++] & 0xFF;
 	}
+
+	private int readEOFThrowing() throws IOException {
+	    int b = read();
+	    if (b == EOF) {
+	        throw new EOFException();
+        }
+	    return b;
+    }
 
 	/** Feeds 16 more bits into {@link #current}, assuming that {@link #fill} is less than 16.
 	 *
@@ -467,13 +479,16 @@ public class InputBitStream implements BooleanIterator, Flushable, Closeable {
 			return fill += 16;
 		}
 
-		try{
-			current = (current << 8) | read();
-			fill += 8;
-			current = (current << 8) | read();
-			fill += 8;
-		}
-		catch(final EOFException dontCare) {}
+        int b = read();
+        if (b != EOF) {
+            current = (current << 8) | b;
+            fill += 8;
+            b = read();
+            if (b != EOF) {
+                current = (current << 8) | b;
+                fill += 8;
+            }
+        }
 
 		return fill;
 	}
@@ -503,7 +518,7 @@ public class InputBitStream implements BooleanIterator, Flushable, Closeable {
 		if (len == 0) return 0;
 
 		if (fill == 0) {
-			current = read();
+			current = readEOFThrowing();
 			fill = 8;
 		}
 
@@ -591,14 +606,24 @@ public class InputBitStream implements BooleanIterator, Flushable, Closeable {
 				len -= shift;
 				i = len >> 3;
 				while(i-- != 0) {
-					b = read();
+					b = readEOFThrowing();
+					if (b == EOF) {
+					    throw new IOException();
+                    }
 					bits[j] |= (b & 0xFF) >>> shift;
 					bits[++j] = (byte)(b << 8 - shift);
 				}
 			}
 			else {
 				i = len >> 3;
-				while(i-- != 0) bits[j++] = (byte)read();
+				while(i-- != 0) {
+                    b = read();
+                    if (b == EOF) {
+                        throw new IOException();
+                    }
+
+                    bits[j++] = (byte)b;
+                }
 			}
 
 			readBits += len & ~7;
@@ -647,7 +672,7 @@ public class InputBitStream implements BooleanIterator, Flushable, Closeable {
 		x = readFromCurrent(fill);
 
 		i = len >> 3;
-		while(i-- != 0) x = x << 8 | read();
+		while(i-- != 0) x = x << 8 | readEOFThrowing();
 		readBits += len & ~7;
 
 		len &= 7;
@@ -675,7 +700,7 @@ public class InputBitStream implements BooleanIterator, Flushable, Closeable {
 		x = readFromCurrent(fill);
 
 		i = len >> 3;
-		while(i-- != 0) x = x << 8 | read();
+		while(i-- != 0) x = x << 8 | readEOFThrowing();
 		readBits += len & ~7;
 
 		len &= 7;
@@ -715,7 +740,7 @@ public class InputBitStream implements BooleanIterator, Flushable, Closeable {
 				nb -= avail + 1;
 				position += pos + avail;
 				pos = avail = 0;
-				read();
+                readEOFThrowing();
 			}
 
 			if (nb <= avail) {
@@ -745,7 +770,7 @@ public class InputBitStream implements BooleanIterator, Flushable, Closeable {
 
 			final int residual = (int)(n & 7);
 			if (residual != 0) {
-				current = read();
+				current = readEOFThrowing();
 				fill = 8 - residual;
 				readBits += residual;
 			}
@@ -813,7 +838,7 @@ public class InputBitStream implements BooleanIterator, Flushable, Closeable {
 		if (DEBUG) System.err.println(this + ": residual=" + residual);
 
 		if (residual != 0) {
-			current = read();
+			current = readEOFThrowing();
 			fill = 8 - residual;
 		}
 	}
@@ -880,7 +905,7 @@ public class InputBitStream implements BooleanIterator, Flushable, Closeable {
 		}
 
 		x = fill;
-		while((current = read()) == 0) x += 8;
+		while((current = readEOFThrowing()) == 0) x += 8;
 		x += 7 - (fill = 31 - Integer.numberOfLeadingZeros(current));
 		readBits += x + 1;
 		return x;
@@ -906,7 +931,7 @@ public class InputBitStream implements BooleanIterator, Flushable, Closeable {
 		}
 
 		x = fill;
-		while((current = read()) == 0) x += 8;
+		while((current = readEOFThrowing()) == 0) x += 8;
 		x += 7 - (fill = 31 - Integer.numberOfLeadingZeros(current));
 		readBits += x + 1;
 		return x;
